@@ -1,5 +1,8 @@
 from fastapi import FastAPI
 from enum import Enum
+from pydantic import BaseModel , Field
+from typing import Any, Optional
+import asyncio
 
 
 app = FastAPI(title = "AI orchestration Demo", version="1.0")
@@ -38,3 +41,33 @@ ALLOWED_TRANSITIONS : dict[WorkFlowState, set[WorkFlowState]]= {
 }
 
 AUTO_APPROVE_THRESHOLD = 100.00
+
+# Data Models
+
+class RefundRequest(BaseModel):
+    # whats the caller sends us to kick off a new refund workflow 
+    order_id : str
+    reason : str = Field(..., min_length= 3)
+
+
+class WorkflowEvent(BaseModel):
+    timestamp : str
+    state : WorkFlowState
+    message : str
+    data : Optional[dict[str, Any]] = None
+
+
+class Workflow(BaseModel):
+    id : str
+    state : WorkFlowState
+    order_id : str
+    reason : str
+    amount : Optional[float] = None
+    events : list[WorkflowEvent] = Field(default_factory= list)
+    error : Optional[str] = None
+
+
+
+WORKFLOWS : dict[str, Workflow]= {}
+
+APPROVAL_SIGNALS : dict[str, asyncio.Future] = {}
