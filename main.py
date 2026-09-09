@@ -1,73 +1,107 @@
 from fastapi import FastAPI
 from enum import Enum
-from pydantic import BaseModel , Field
+from pydantic import BaseModel, Field
 from typing import Any, Optional
 import asyncio
 
+app = FastAPI(title = "AI ORCHESTRATION", version= "1.0")
 
-app = FastAPI(title = "AI orchestration Demo", version="1.0")
 
 
-#  1. STATE MACHINE DEFINITION
+# State Machine Defination  
 
-class WorkFlowState(str, Enum):
-    INTAKE = "intake"
-    FETCHING_ORDER = "fetching_order"
-    NEEDS_APPROVAL = "needs_approval"
-    PROCESSING = "processing"
-    COMPLETE = "complete"
-    FAILED = "failed"
+class WorkflowState(str,Enum):
+    '''
+    Enum is used to define a fixed set of valid states for the workflow.
+    Enum is used here because the workflow can only have specific predefined states. 
+    It prevents us from accidentally using invalid state names or typos.
+    '''
 
-ALLOWED_TRANSITIONS : dict[WorkFlowState, set[WorkFlowState]]= {
-    WorkFlowState.INTAKE: {
-        WorkFlowState.FETCHING_ORDER,
-        WorkFlowState.FAILED,
+    INTAKE = "intake"                        # query just recieved , not happened yet
+    FETCHING_ORDER = "fetching_order"        # a tool call to order service is in flight
+    NEEDS_APPROVAL =  "needs_approval"      # amount is high enough for a human must sign off
+    PROCESSING = "processing"               # a tool call to payment service is in flight
+    COMPLETE = "complete"                   #terminal state : refund success
+    FAILED = "failed"                       #  terminal state : refund could not be processed
+
+
+'''
+this dict is the actual state machine - it says exactly which 
+transaction are legal from each state. Trying to move to a state that
+# isn't in this set is treated as a bug (see the `transition()` function
+# below, which raises a RuntimeError if you try).
+
+'''
+
+ALLOWED_TRANSACTIONS:dict[WorkflowState, set[WorkflowState]] = {
+    WorkflowState.INTAKE:{
+        WorkflowState.FETCHING_ORDER,
+        WorkflowState.FAILED, 
     },
-    WorkFlowState.FETCHING_ORDER:{
-        WorkFlowState.NEEDS_APPROVAL,
-        WorkFlowState.PROCESSING,
-        WorkFlowState.FAILED,
+    WorkflowState.FETCHING_ORDER:{
+        WorkflowState.NEEDS_APPROVAL,
+        WorkflowState.PROCESSING,
+        WorkflowState.FAILED,
     },
-    WorkFlowState.NEEDS_APPROVAL:{
-        WorkFlowState.PROCESSING,
-        WorkFlowState.FAILED,
+    WorkflowState.NEEDS_APPROVAL:{
+        WorkflowState.PROCESSING,
+        WorkflowState.FAILED,
+    }, 
+    WorkflowState.PROCESSING:{
+        WorkflowState.COMPLETE,
+        WorkflowState.FAILED,
     },
-    WorkFlowState.PROCESSING:{
-        WorkFlowState.COMPLETE,
-        WorkFlowState.FAILED,
-    },
-    WorkFlowState.COMPLETE:set(),
-    WorkFlowState.FAILED : set(),
+    WorkflowState.COMPLETE: set(),
+    WorkflowState.FAILED : set(), 
+
 }
 
+# refunds above this amount cannot be auto-approved and must
+# go through the human-handoff step.
 AUTO_APPROVE_THRESHOLD = 100.00
+
 
 # Data Models
 
 class RefundRequest(BaseModel):
-    # whats the caller sends us to kick off a new refund workflow 
     order_id : str
-    reason : str = Field(..., min_length= 3)
+    reason : str = Field(..., max_length= 3)
 
 
-class WorkflowEvent(BaseModel):
+class WorkFlowEvent(BaseModel):
     timestamp : str
-    state : WorkFlowState
+    state : WorkflowState
     message : str
     data : Optional[dict[str, Any]] = None
 
 
 class Workflow(BaseModel):
     id : str
-    state : WorkFlowState
+    state : WorkflowState
     order_id : str
     reason : str
-    amount : Optional[float] = None
-    events : list[WorkflowEvent] = Field(default_factory= list)
-    error : Optional[str] = None
+    amount : Optional[float] = None   # filled in once we fetch the order
+    events : list[WorkFlowEvent]= Field(default_factory=list)   # full audit trail
+    error : Optional[str] = None    # populated only if the workflow ends in FAILED
 
 
 
-WORKFLOWS : dict[str, Workflow]= {}
+'''
+These two lines are creating in-memory storage for your orchestration system.
+Why do we need it?
+When a refund workflow starts, you need somewhere to remember its current state.
+'''
+WORKFLOWS : dict[str, Workflow] = {}
 
-APPROVAL_SIGNALS : dict[str, asyncio.Future] = {}
+AUTO_APPROVAL_SIGNALS : dict[str, asyncio.Future ]= {}
+'''
+It stores waiting signals/futures for workflows that are waiting for approval.
+
+WORKFLOWS
+    ↓
+"What workflows currently exist and what is their state?"
+
+AUTO_APPROVAL_SIGNALS
+    ↓
+"Which workflows are currently waiting for an approval signal?"
+'''
