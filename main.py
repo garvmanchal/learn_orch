@@ -1,14 +1,15 @@
+import asyncio                   #gives us async/await, sleep, and Future (used for the human-handoff pause)
+from enum import Enum            # Enum backs our WorkflowState — gives us named, type-safe states
 from fastapi import FastAPI
-from enum import Enum
-from pydantic import BaseModel, Field
 from typing import Any, Optional
-import asyncio
+from pydantic import BaseModel, Field  # request/response schemas with automatic validation
+
 
 app = FastAPI(title = "AI ORCHESTRATION", version= "1.0")
 
 
 
-# State Machine Defination  
+# 1. State Machine Defination  
 
 class WorkflowState(str,Enum):
     '''
@@ -61,7 +62,7 @@ ALLOWED_TRANSACTIONS:dict[WorkflowState, set[WorkflowState]] = {
 AUTO_APPROVE_THRESHOLD = 100.00
 
 
-# Data Models
+#2 . Data Models
 
 class RefundRequest(BaseModel):
     order_id : str
@@ -105,3 +106,5 @@ AUTO_APPROVAL_SIGNALS
     ↓
 "Which workflows are currently waiting for an approval signal?"
 '''
+
+# 3. Simulated Tools
